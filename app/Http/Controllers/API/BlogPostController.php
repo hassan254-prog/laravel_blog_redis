@@ -8,6 +8,7 @@ use App\Models\BlogPost;
 use App\Http\Resources\BlogPost as BlogPostResource;
 use Illuminate\Http\Response;
 use Validator;
+use Illuminate\Support\Facades\Redis;
 
 
 class BlogPostController extends BaseController
@@ -19,8 +20,15 @@ class BlogPostController extends BaseController
      */
     public function index()
     {
-        $blog_post = BlogPost::all();
-        return $this->sendResponse(['data' =>$blog_post], 'Blog Post list');
+    $cachedBlog = Redis::get('blog');
+        if(isset($cachedBlog)) {
+            $blog_post = json_decode($cachedBlog, FALSE);
+            return $this->sendResponse(['data' =>$blog_post], 'Blog Post list from cache');
+        }else {
+            $blog_post = BlogPost::all();
+            Redis::set('blog', $blog_post);
+            return $this->sendResponse(['data' =>$blog_post], 'Blog Post list from database');
+        }
     }
 
     /**
@@ -39,6 +47,8 @@ class BlogPostController extends BaseController
             return $this->handleError($validator->errors());       
         }
         $blog_post = BlogPost::create($input);
+        Redis::set('blog_'.$blog_post->id, $blog_post);
+
         return $this->handleResponse(new BlogPostResource($blog_post), 'Blog Post created!');
     }
     /**
@@ -49,9 +59,14 @@ class BlogPostController extends BaseController
      */
     public function show($id)
     {
-        $blog_post = BlogPost::find($id);
-        if (is_null($blog_post)) {
-            return $this->handleError('Blog Post found!');
+        $cachedBlog = Redis::get('blog_'.$id);
+        if(isset($cachedBlog)) {
+            $blog_post = json_decode($cachedBlog, FALSE);
+            return $this->sendResponse(['data' =>$blog_post], 'Blog Post list from cache');
+        }else {
+            $blog_post = BlogPost::find($id);
+            Redis::set('blog_'.$id, $blog_post);
+            return $this->sendResponse(['data' =>$blog_post], 'Blog Post list from database');
         }
         return $this->handleResponse(new BlogPostResource($blog_post), 'Blog Post retrieved.');
     }
@@ -74,12 +89,12 @@ class BlogPostController extends BaseController
         if($validator->fails()){
             return $this->handleError($validator->errors());       
         }
-
+        Redis::del('blog_' . $blog_post->id);
         $blog_post->title = $input['title'];
         $blog_post->body = $input['body'];
         $blog_post->save();
-        
-        return $this->handleResponse(new BlogPostResource($blog_post), 'Case-Sub successfully updated!');
+        Redis::set('blog_' . $blog_post->id, $blog_post);
+        return $this->handleResponse(new BlogPostResource($blog_post), 'Blog Post successfully updated!');
     }
 
     /**
@@ -91,6 +106,7 @@ class BlogPostController extends BaseController
     public function destroy(BlogPost $blog_post)
     {
         $blog_post->delete();
+        Redis::del('blog_' . $blog_post->id);
         return $this->handleResponse(new BlogPostResource($blog_post), 'Blog Post deleted!');
     }
 }
